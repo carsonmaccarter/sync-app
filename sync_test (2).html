@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sync Test</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    background: #f2f2f7;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%;
+    max-width: 540px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06);
+  }
+
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    color: #1c1c1e;
+    margin-bottom: 4px;
+  }
+
+  /* ── Status bar ── */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 20px;
+    min-height: 22px;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #c7c7cc;
+    flex-shrink: 0;
+    transition: background .3s;
+  }
+  .dot.ok       { background: #34c759; }
+  .dot.saving   { background: #ff9500; animation: blink .8s infinite; }
+  .dot.error    { background: #ff3b30; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .status-text {
+    font-size: 12.5px;
+    color: #8e8e93;
+    flex: 1;
+  }
+  .btn-sm {
+    font-size: 12px;
+    color: #007aff;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  .btn-sm:hover { background: #f2f2f7; }
+
+  /* ── Textarea ── */
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    border: 1.5px solid #e5e5ea;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 15px;
+    font-family: inherit;
+    color: #1c1c1e;
+    resize: vertical;
+    outline: none;
+    line-height: 1.55;
+    transition: border-color .2s;
+  }
+  textarea:focus { border-color: #007aff; }
+  textarea:disabled { background: #f9f9fb; color: #8e8e93; }
+
+  /* ── Setup overlay ── */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.45);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    z-index: 10;
+  }
+  .setup-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%;
+    max-width: 420px;
+  }
+  .setup-card h2 { font-size: 18px; font-weight: 600; margin-bottom: 6px; color: #1c1c1e; }
+  .setup-card p  { font-size: 13.5px; color: #48484a; line-height: 1.55; margin-bottom: 20px; }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 500; color: #8e8e93; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+  .field input {
+    width: 100%;
+    border: 1.5px solid #e5e5ea;
+    border-radius: 9px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #1c1c1e;
+    outline: none;
+    background: #f9f9fb;
+  }
+  .field input:focus { border-color: #007aff; background: #fff; }
+
+  .setup-err {
+    font-size: 13px;
+    color: #ff3b30;
+    margin-bottom: 12px;
+    display: none;
+    padding: 10px 12px;
+    background: #fff2f1;
+    border-radius: 8px;
+  }
+  .setup-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+  .btn-primary {
+    padding: 9px 20px;
+    background: #007aff;
+    color: #fff;
+    border: none;
+    border-radius: 9px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-primary:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+
+<!-- Setup overlay -->
+<div class="overlay" id="overlay">
+  <div class="setup-card">
+    <h2>Connect to GitHub</h2>
+    <p>Enter your GitHub details below. The app will read and write a file called <code>data.json</code> in your repo.</p>
+
+    <div class="field">
+      <label>GitHub Username</label>
+      <input id="s-user" placeholder="e.g. carsonmaccarter" autocapitalize="none" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>Repository Name</label>
+      <input id="s-repo" placeholder="e.g. sync-test" autocapitalize="none" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>Personal Access Token <span style="font-weight:400;text-transform:none">(needs <strong>repo</strong> scope — <a href="https://github.com/settings/tokens/new" target="_blank" style="color:#007aff">create one</a>)</span></label>
+      <input id="s-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocapitalize="none" spellcheck="false" autocorrect="off" autocomplete="off">
+    </div>
+
+    <div class="setup-err" id="setup-err"></div>
+    <div class="setup-actions">
+      <button class="btn-primary" id="connect-btn" onclick="connect()">Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Main UI -->
+<div class="card">
+  <h1>Sync Test</h1>
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="status-text">Not connected</span>
+    <button class="btn-sm" onclick="forcePull()">↓ Pull</button>
+    <button class="btn-sm" onclick="forcePush()">↑ Push</button>
+    <button class="btn-sm" onclick="showSetup()" style="color:#8e8e93">⚙</button>
+  </div>
+  <textarea id="editor" placeholder="Type anything here — it will sync to your GitHub repo." disabled></textarea>
+</div>
+
+<script>
+const FILE = 'data.json';
+const U_KEY = 'st_user', R_KEY = 'st_repo', T_KEY = 'st_token';
+
+let pushTimer = null;
+let lastPushedText = null; // track what we last wrote to avoid pointless re-pushes
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function setStatus(state, msg) {
+  document.getElementById('dot').className = 'dot' + (state ? ' ' + state : '');
+  document.getElementById('status-text').textContent = msg;
+}
+
+function getUser()  { return localStorage.getItem(U_KEY) || ''; }
+function getRepo()  { return localStorage.getItem(R_KEY) || ''; }
+function getToken() { return (localStorage.getItem(T_KEY) || '').replace(/\s/g, ''); }
+
+// ── GitHub API ────────────────────────────────────────────────────────────────
+async function ghFetch(method, path, body) {
+  const res = await fetch('https://api.github.com' + path, {
+    method,
+    headers: {
+      'Authorization': 'token ' + getToken(),
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error('HTTP ' + res.status + ': ' + t.slice(0, 200));
+  }
+  return res.status === 204 ? {} : res.json();
+}
+
+// Read via GitHub API (consistent CORS support across all browsers)
+async function rawRead() {
+  try {
+    const info = await ghFetch('GET', `/repos/${getUser()}/${getRepo()}/contents/${FILE}`);
+    // API returns content as base64
+    const text = decodeURIComponent(escape(atob(info.content.replace(/\n/g, ''))));
+    return JSON.parse(text);
+  } catch(e) {
+    if (e.message.includes('404')) return null; // file doesn't exist yet
+    throw e;
+  }
+}
+
+// Get current SHA — needed for every write to avoid 409 conflicts
+async function getSha() {
+  try {
+    const info = await ghFetch('GET', `/repos/${getUser()}/${getRepo()}/contents/${FILE}`);
+    return info.sha || null;
+  } catch(e) {
+    if (e.message.includes('404')) return null; // file doesn't exist yet
+    throw e;
+  }
+}
+
+// ── Core operations ───────────────────────────────────────────────────────────
+
+// Pull: read from raw URL, populate textarea
+async function pull() {
+  setStatus('saving', 'Reading…');
+  const data = await rawRead();
+  if (data === null) {
+    setStatus('ok', 'Connected — file not created yet, start typing to create it');
+    document.getElementById('editor').disabled = false;
+    return;
+  }
+  const text = data.text || '';
+  document.getElementById('editor').value = text;
+  lastPushedText = text;
+  setStatus('ok', 'Pulled · ' + timestamp());
+  document.getElementById('editor').disabled = false;
+}
+
+// Push: write textarea contents to GitHub, fetching fresh SHA immediately before write
+async function push() {
+  const text = document.getElementById('editor').value;
+
+  // Skip if nothing changed since last push
+  if (text === lastPushedText) {
+    setStatus('ok', 'Already up to date · ' + timestamp());
+    return;
+  }
+
+  setStatus('saving', 'Saving…');
+  try {
+    // Always get a fresh SHA right before writing — prevents 409 conflicts
+    const sha = await getSha();
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify({ text }, null, 2))));
+    const body = { message: 'update data', content };
+    if (sha) body.sha = sha;
+    await ghFetch('PUT', `/repos/${getUser()}/${getRepo()}/contents/${FILE}`, body);
+    lastPushedText = text;
+    setStatus('ok', 'Saved · ' + timestamp());
+  } catch(e) {
+    setStatus('error', 'Save failed: ' + e.message.slice(0, 80));
+  }
+}
+
+function timestamp() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ── Textarea input handler ────────────────────────────────────────────────────
+document.getElementById('editor').addEventListener('input', () => {
+  setStatus('saving', 'Unsaved changes…');
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, 1200); // push 1.2s after user stops typing
+});
+
+// ── Manual buttons ────────────────────────────────────────────────────────────
+async function forcePull() {
+  try { await pull(); }
+  catch(e) { setStatus('error', 'Pull failed: ' + e.message.slice(0, 80)); }
+}
+
+async function forcePush() {
+  clearTimeout(pushTimer);
+  try { await push(); }
+  catch(e) { setStatus('error', 'Push failed: ' + e.message.slice(0, 80)); }
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+function showSetup() {
+  document.getElementById('s-user').value = getUser();
+  document.getElementById('s-repo').value = getRepo();
+  document.getElementById('s-token').value = getToken();
+  document.getElementById('overlay').style.display = 'flex';
+}
+
+async function connect() {
+  const user  = document.getElementById('s-user').value.trim().toLowerCase();
+  const repo  = document.getElementById('s-repo').value.trim();
+  const token = document.getElementById('s-token').value.replace(/\s/g, '');
+  const errEl = document.getElementById('setup-err');
+  errEl.style.display = 'none';
+
+  if (!user || !repo || !token) {
+    errEl.textContent = 'Please fill in all three fields.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.getElementById('connect-btn');
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+
+  try {
+    // Save first so getToken() returns the new token during validation
+    localStorage.setItem(U_KEY, user);
+    localStorage.setItem(R_KEY, repo);
+    localStorage.setItem(T_KEY, token);
+
+    // Validate token
+    await ghFetch('GET', '/user');
+
+    document.getElementById('overlay').style.display = 'none';
+    await pull(); // load whatever is in the repo already
+  } catch(e) {
+    errEl.textContent = 'Could not connect: ' + e.message.slice(0, 120) + '. Make sure the token has repo scope.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+if (getToken()) {
+  document.getElementById('overlay').style.display = 'none';
+  setStatus('saving', 'Loading…');
+  pull().catch(e => setStatus('error', 'Load failed: ' + e.message.slice(0, 80)));
+} else {
+  document.getElementById('overlay').style.display = 'flex';
+}
+</script>
+</body>
+</html>
