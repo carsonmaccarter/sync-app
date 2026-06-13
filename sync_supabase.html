@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sync Test</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    background: #f2f2f7;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%;
+    max-width: 540px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06);
+  }
+
+  h1 { font-size: 17px; font-weight: 600; color: #1c1c1e; margin-bottom: 4px; }
+
+  .status-row {
+    display: flex; align-items: center; gap: 7px;
+    margin-bottom: 20px; min-height: 22px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #c7c7cc; flex-shrink: 0; transition: background .3s;
+  }
+  .dot.ok     { background: #34c759; }
+  .dot.saving { background: #ff9500; animation: blink .8s infinite; }
+  .dot.error  { background: #ff3b30; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .status-text { font-size: 12.5px; color: #8e8e93; flex: 1; }
+
+  .btn-sm {
+    font-size: 12px; color: #007aff; background: none;
+    border: none; cursor: pointer; padding: 2px 6px;
+    border-radius: 6px; font-family: inherit;
+  }
+  .btn-sm:hover { background: #f2f2f7; }
+
+  textarea {
+    width: 100%; min-height: 220px;
+    border: 1.5px solid #e5e5ea; border-radius: 10px;
+    padding: 14px; font-size: 15px; font-family: inherit;
+    color: #1c1c1e; resize: vertical; outline: none;
+    line-height: 1.55; transition: border-color .2s;
+  }
+  textarea:focus { border-color: #007aff; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Sync Test</h1>
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="status-text">Connecting…</span>
+    <button class="btn-sm" onclick="forcePull()">↓ Pull</button>
+    <button class="btn-sm" onclick="forcePush()">↑ Push</button>
+  </div>
+  <textarea id="editor" placeholder="Type anything — it syncs across all devices automatically."></textarea>
+</div>
+
+<script>
+const SUPABASE_URL  = 'https://cwafknfqouuwwsenzeie.supabase.co';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3YWZrbmZxb3V1d3dzZW56ZWllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMjUwOTgsImV4cCI6MjA5NjkwMTA5OH0.BV-zte1PN3hE2DQCstRzTMe2WJyvWhewh0n9X0_ylPI';
+const TABLE         = 'sync_data';
+const ROW_ID        = 1; // single row stores all data
+
+let pushTimer = null;
+let lastText  = null;
+let polling   = null;
+
+// ── Supabase REST helpers ─────────────────────────────────────────────────────
+const headers = {
+  'apikey': SUPABASE_KEY,
+  'Authorization': 'Bearer ' + SUPABASE_KEY,
+  'Content-Type': 'application/json',
+  'Prefer': 'return=minimal'
+};
+
+async function dbRead() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?id=eq.${ROW_ID}&select=value`, { headers });
+  if (!res.ok) throw new Error('Read failed: HTTP ' + res.status);
+  const rows = await res.json();
+  return rows.length ? rows[0].value : null;
+}
+
+async function dbWrite(value) {
+  // Upsert — inserts if row doesn't exist, updates if it does
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+    method: 'POST',
+    headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ id: ROW_ID, value })
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error('Write failed: HTTP ' + res.status + ' ' + t.slice(0, 100));
+  }
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+function setStatus(state, msg) {
+  document.getElementById('dot').className = 'dot' + (state ? ' ' + state : '');
+  document.getElementById('status-text').textContent = msg;
+}
+
+function ts() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ── Pull ──────────────────────────────────────────────────────────────────────
+async function pull() {
+  setStatus('saving', 'Reading…');
+  const value = await dbRead();
+  if (value === null) {
+    setStatus('ok', 'Connected — start typing to sync');
+    return;
+  }
+  if (value !== lastText) {
+    document.getElementById('editor').value = value;
+    lastText = value;
+  }
+  setStatus('ok', 'Pulled · ' + ts());
+}
+
+// ── Push ──────────────────────────────────────────────────────────────────────
+async function push() {
+  const text = document.getElementById('editor').value;
+  if (text === lastText) { setStatus('ok', 'Up to date · ' + ts()); return; }
+  setStatus('saving', 'Saving…');
+  await dbWrite(text);
+  lastText = text;
+  setStatus('ok', 'Saved · ' + ts());
+}
+
+// ── Input handler ─────────────────────────────────────────────────────────────
+document.getElementById('editor').addEventListener('input', () => {
+  setStatus('saving', 'Unsaved…');
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    try { await push(); }
+    catch(e) { setStatus('error', e.message.slice(0, 80)); }
+    pushTimer = null;
+  }, 800);
+});
+
+// ── Manual buttons ────────────────────────────────────────────────────────────
+async function forcePull() {
+  try { await pull(); } catch(e) { setStatus('error', e.message.slice(0, 80)); }
+}
+async function forcePush() {
+  clearTimeout(pushTimer); pushTimer = null;
+  try { await push(); } catch(e) { setStatus('error', e.message.slice(0, 80)); }
+}
+
+// ── Auto-poll every 5 seconds ─────────────────────────────────────────────────
+function startPolling() {
+  polling = setInterval(async () => {
+    if (pushTimer) return; // don't poll while actively typing
+    try {
+      const value = await dbRead();
+      if (value !== null && value !== lastText) {
+        document.getElementById('editor').value = value;
+        lastText = value;
+        setStatus('ok', 'Updated · ' + ts());
+      }
+    } catch(e) { /* silent background failure */ }
+  }, 5000);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    await pull();
+    startPolling();
+  } catch(e) {
+    setStatus('error', 'Could not connect: ' + e.message.slice(0, 80));
+  }
+}
+
+init();
+</script>
+</body>
+</html>
